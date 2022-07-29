@@ -80,7 +80,7 @@ spec:
                   {{- else }}
                   name: {{ template "mastodon.fullname" . }}
                   {{- end }}
-                  key: postgresql-password
+                  key: postgres-password
             - name: "REDIS_PASSWORD"
               valueFrom:
                 secretKeyRef:
