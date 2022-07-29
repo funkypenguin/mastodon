@@ -2,6 +2,28 @@ apiVersion: v1
 entries:
   mastodon:
   - apiVersion: v2
+    appVersion: 3.5.2
+    created: "2022-07-29T05:52:22.709664381Z"
+    dependencies:
+    - condition: elasticsearch.enabled
+      name: elasticsearch
+      repository: https://charts.bitnami.com/bitnami
+      version: 19.x
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 11.x
+    - name: redis
+      repository: https://charts.bitnami.com/bitnami
+      version: 17.x
+    description: Mastodon is a free, open-source social network server based on ActivityPub.
+    digest: b7ebbbd57543ad227f1754e9925ecaf4bb6dbbd2ef5d8a89939be6de4010bb4a
+    name: mastodon
+    type: application
+    urls:
+    - https://github.com/funkypenguin/mastodon/releases/download/mastodon-1.2.2-pre-02/mastodon-1.2.2-pre-02.tgz
+    version: 1.2.2-pre-02
+  - apiVersion: v2
     appVersion: 3.3.0
     created: "2022-07-29T05:41:23.980693552Z"
     dependencies:
@@ -45,4 +67,4 @@ entries:
     urls:
     - https://github.com/funkypenguin/mastodon/releases/download/mastodon-1.2.1/mastodon-1.2.1.tgz
     version: 1.2.1
-generated: "2022-07-29T05:41:23.980713452Z"
+generated: "2022-07-29T05:52:22.70968328Z"
