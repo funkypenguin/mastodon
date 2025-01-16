@@ -6,6 +6,11 @@ class ActivityPub::ProcessAccountService < BaseService
   include Redisable
   include Lockable
 
+  SUBDOMAINS_RATELIMIT = 10
+  DISCOVERIES_PER_REQUEST = 400
+
+  VALID_URI_SCHEMES = %w(http https).freeze
+
   # Should be called with confirmed valid JSON
   # and WebFinger-resolved username and domain
   def call(username, domain, json, options = {})
@@ -15,24 +20,36 @@ class ActivityPub::ProcessAccountService < BaseService
     @json        = json
     @uri         = @json['id']
     @username    = username
-    @domain      = domain
+    @domain      = TagManager.instance.normalize_domain(domain)
     @collections = {}
 
-    with_lock("process_account:#{@uri}") do
+    # The key does not need to be unguessable, it just needs to be somewhat unique
+    @options[:request_id] ||= "#{Time.now.utc.to_i}-#{username}@#{domain}"
+
+    with_redis_lock("process_account:#{@uri}") do
       @account            = Account.remote.find_by(uri: @uri) if @options[:only_key]
       @account          ||= Account.find_remote(@username, @domain)
       @old_public_key     = @account&.public_key
       @old_protocol       = @account&.protocol
       @suspension_changed = false
 
-      create_account if @account.nil?
+      if @account.nil?
+        with_redis do |redis|
+          return nil if redis.pfcount("unique_subdomains_for:#{PublicSuffix.domain(@domain, ignore_private: true)}") >= SUBDOMAINS_RATELIMIT
+
+          discoveries = redis.incr("discovery_per_request:#{@options[:request_id]}")
+          redis.expire("discovery_per_request:#{@options[:request_id]}", 5.minutes.seconds)
+          return nil if discoveries > DISCOVERIES_PER_REQUEST
+        end
+
+        create_account
+      end
+
       update_account
       process_tags
 
       process_duplicate_accounts! if @options[:verified_webfinger]
     end
-
-    return if @account.nil?
 
     after_protocol_change! if protocol_changed?
     after_key_change! if key_changed? && !@options[:signed_with_known_key]
@@ -41,7 +58,8 @@ class ActivityPub::ProcessAccountService < BaseService
 
     unless @options[:only_key] || @account.suspended?
       check_featured_collection! if @account.featured_collection_url.present?
-      check_links! unless @account.fields.empty?
+      check_featured_tags_collection! if @json['featuredTags'].present?
+      check_links! if @account.fields.any?(&:requires_verification?)
     end
 
     @account
@@ -60,7 +78,10 @@ class ActivityPub::ProcessAccountService < BaseService
     @account.suspended_at      = domain_block.created_at if auto_suspend?
     @account.suspension_origin = :local if auto_suspend?
     @account.silenced_at       = domain_block.created_at if auto_silence?
-    @account.save
+
+    set_immediate_protocol_attributes!
+
+    @account.save!
   end
 
   def update_account
@@ -77,25 +98,39 @@ class ActivityPub::ProcessAccountService < BaseService
   end
 
   def set_immediate_protocol_attributes!
-    @account.inbox_url               = @json['inbox'] || ''
-    @account.outbox_url              = @json['outbox'] || ''
-    @account.shared_inbox_url        = (@json['endpoints'].is_a?(Hash) ? @json['endpoints']['sharedInbox'] : @json['sharedInbox']) || ''
-    @account.followers_url           = @json['followers'] || ''
+    @account.inbox_url               = valid_collection_uri(@json['inbox'])
+    @account.outbox_url              = valid_collection_uri(@json['outbox'])
+    @account.shared_inbox_url        = valid_collection_uri(@json['endpoints'].is_a?(Hash) ? @json['endpoints']['sharedInbox'] : @json['sharedInbox'])
+    @account.followers_url           = valid_collection_uri(@json['followers'])
     @account.url                     = url || @uri
     @account.uri                     = @uri
     @account.actor_type              = actor_type
     @account.created_at              = @json['published'] if @json['published'].present?
   end
 
+  def valid_collection_uri(uri)
+    uri = uri.first if uri.is_a?(Array)
+    uri = uri['id'] if uri.is_a?(Hash)
+    return '' unless uri.is_a?(String)
+
+    parsed_uri = Addressable::URI.parse(uri)
+
+    VALID_URI_SCHEMES.include?(parsed_uri.scheme) && parsed_uri.host.present? ? parsed_uri : ''
+  rescue Addressable::URI::InvalidURIError
+    ''
+  end
+
   def set_immediate_attributes!
     @account.featured_collection_url = @json['featured'] || ''
-    @account.devices_url             = @json['devices'] || ''
     @account.display_name            = @json['name'] || ''
     @account.note                    = @json['summary'] || ''
     @account.locked                  = @json['manuallyApprovesFollowers'] || false
     @account.fields                  = property_values || {}
     @account.also_known_as           = as_array(@json['alsoKnownAs'] || []).map { |item| value_or_id(item) }
     @account.discoverable            = @json['discoverable'] || false
+    @account.indexable               = @json['indexable'] || false
+    @account.memorial                = @json['memorial'] || false
+    @account.attribution_domains     = as_array(@json['attributionDomains'] || []).map { |item| value_or_id(item) }
   end
 
   def set_fetchable_key!
@@ -105,12 +140,14 @@ class ActivityPub::ProcessAccountService < BaseService
   def set_fetchable_attributes!
     begin
       @account.avatar_remote_url = image_url('icon') || '' unless skip_download?
-    rescue Mastodon::UnexpectedResponseError, HTTP::TimeoutError, HTTP::ConnectionError, OpenSSL::SSL::SSLError
+      @account.avatar = nil if @account.avatar_remote_url.blank?
+    rescue Mastodon::UnexpectedResponseError, *Mastodon::HTTP_CONNECTION_ERRORS
       RedownloadAvatarWorker.perform_in(rand(30..600).seconds, @account.id)
     end
     begin
       @account.header_remote_url = image_url('image') || '' unless skip_download?
-    rescue Mastodon::UnexpectedResponseError, HTTP::TimeoutError, HTTP::ConnectionError, OpenSSL::SSL::SSLError
+      @account.header = nil if @account.header_remote_url.blank?
+    rescue Mastodon::UnexpectedResponseError, *Mastodon::HTTP_CONNECTION_ERRORS
       RedownloadHeaderWorker.perform_in(rand(30..600).seconds, @account.id)
     end
     @account.statuses_count    = outbox_total_items    if outbox_total_items.present?
@@ -149,11 +186,15 @@ class ActivityPub::ProcessAccountService < BaseService
   end
 
   def check_featured_collection!
-    ActivityPub::SynchronizeFeaturedCollectionWorker.perform_async(@account.id)
+    ActivityPub::SynchronizeFeaturedCollectionWorker.perform_async(@account.id, { 'hashtag' => @json['featuredTags'].blank?, 'request_id' => @options[:request_id] })
+  end
+
+  def check_featured_tags_collection!
+    ActivityPub::SynchronizeFeaturedTagsCollectionWorker.perform_async(@account.id, @json['featuredTags'])
   end
 
   def check_links!
-    VerifyAccountLinksWorker.perform_async(@account.id)
+    VerifyAccountLinksWorker.perform_in(rand(10.minutes.to_i), @account.id)
   end
 
   def process_duplicate_accounts!
@@ -174,10 +215,15 @@ class ActivityPub::ProcessAccountService < BaseService
     value = first_of_value(@json[key])
 
     return if value.nil?
-    return value['url'] if value.is_a?(Hash)
 
-    image = fetch_resource_without_id_validation(value)
-    image['url'] if image
+    if value.is_a?(String)
+      value = fetch_resource_without_id_validation(value)
+      return if value.nil?
+    end
+
+    value = first_of_value(value['url']) if value.is_a?(Hash) && value['type'] == 'Image'
+    value = value['href'] if value.is_a?(Hash)
+    value if value.is_a?(String)
   end
 
   def public_key
@@ -204,6 +250,7 @@ class ActivityPub::ProcessAccountService < BaseService
 
   def property_values
     return unless @json['attachment'].is_a?(Array)
+
     as_array(@json['attachment']).select { |attachment| attachment['type'] == 'PropertyValue' }.map { |attachment| attachment.slice('name', 'value') }
   end
 
@@ -235,21 +282,22 @@ class ActivityPub::ProcessAccountService < BaseService
   end
 
   def collection_info(type)
-    return [nil, nil] if @json[type].blank?
+    collection_uri = valid_collection_uri(@json[type])
+    return [nil, nil] if collection_uri.blank?
     return @collections[type] if @collections.key?(type)
 
-    collection = fetch_resource_without_id_validation(@json[type])
+    collection = fetch_resource_without_id_validation(collection_uri)
 
     total_items = collection.is_a?(Hash) && collection['totalItems'].present? && collection['totalItems'].is_a?(Numeric) ? collection['totalItems'] : nil
     has_first_page = collection.is_a?(Hash) && collection['first'].present?
     @collections[type] = [total_items, has_first_page]
-  rescue HTTP::Error, OpenSSL::SSL::SSLError, Mastodon::LengthValidationError
+  rescue *Mastodon::HTTP_CONNECTION_ERRORS, Mastodon::LengthValidationError
     @collections[type] = [nil, nil]
   end
 
   def moved_account
     account   = ActivityPub::TagManager.instance.uri_to_resource(@json['movedTo'], Account)
-    account ||= ActivityPub::FetchRemoteAccountService.new.call(@json['movedTo'], id: true, break_on_redirect: true)
+    account ||= ActivityPub::FetchRemoteAccountService.new.call(@json['movedTo'], break_on_redirect: true, request_id: @options[:request_id])
     account
   end
 
@@ -267,6 +315,7 @@ class ActivityPub::ProcessAccountService < BaseService
 
   def domain_block
     return @domain_block if defined?(@domain_block)
+
     @domain_block = DomainBlock.rule_for(@domain)
   end
 

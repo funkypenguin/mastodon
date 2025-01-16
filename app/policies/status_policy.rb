@@ -7,12 +7,8 @@ class StatusPolicy < ApplicationPolicy
     @preloaded_relations = preloaded_relations
   end
 
-  def index?
-    role.can?(:manage_reports, :manage_users)
-  end
-
   def show?
-    return false if author.suspended?
+    return false if author.unavailable?
 
     if requires_mention?
       owned? || mention_exists?
@@ -32,17 +28,13 @@ class StatusPolicy < ApplicationPolicy
   end
 
   def destroy?
-    role.can?(:manage_reports) || owned?
+    owned?
   end
 
   alias unreblog? destroy?
 
   def update?
-    role.can?(:manage_reports) || owned?
-  end
-
-  def review?
-    role.can?(:manage_taxonomies)
+    owned?
   end
 
   private
@@ -65,7 +57,7 @@ class StatusPolicy < ApplicationPolicy
     if record.mentions.loaded?
       record.mentions.any? { |mention| mention.account_id == current_account.id }
     else
-      record.mentions.where(account: current_account).exists?
+      record.mentions.exists?(account: current_account)
     end
   end
 

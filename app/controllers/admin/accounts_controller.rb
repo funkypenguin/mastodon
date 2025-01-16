@@ -16,7 +16,11 @@ module Admin
     def batch
       authorize :account, :index?
 
-      @form = Form::AccountBatch.new(form_account_batch_params.merge(current_account: current_account, action: action_from_button))
+      @form = Form::AccountBatch.new(form_account_batch_params)
+      @form.current_account = current_account
+      @form.action = action_from_button
+      @form.select_all_matching = params[:select_all_matching]
+      @form.query = filtered_accounts
       @form.save
     rescue ActionController::ParameterMissing
       flash[:alert] = I18n.t('admin.accounts.no_account_selected')
@@ -29,7 +33,7 @@ module Admin
 
       @deletion_request        = @account.deletion_request
       @account_moderation_note = current_account.account_moderation_notes.new(target_account: @account)
-      @moderation_notes        = @account.targeted_moderation_notes.latest
+      @moderation_notes        = @account.targeted_moderation_notes.chronological.includes(:account)
       @warnings                = @account.strikes.includes(:target_account, :account, :appeal).latest
       @domain_block            = DomainBlock.rule_for(@account.domain)
     end
@@ -51,12 +55,14 @@ module Admin
     def approve
       authorize @account.user, :approve?
       @account.user.approve!
+      log_action :approve, @account.user
       redirect_to admin_accounts_path(status: 'pending'), notice: I18n.t('admin.accounts.approved_msg', username: @account.acct)
     end
 
     def reject
       authorize @account.user, :reject?
       DeleteAccountService.new.call(@account, reserve_email: false, reserve_username: false)
+      log_action :reject, @account.user
       redirect_to admin_accounts_path(status: 'pending'), notice: I18n.t('admin.accounts.rejected_msg', username: @account.acct)
     end
 
