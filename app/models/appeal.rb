@@ -16,14 +16,17 @@
 #  updated_at             :datetime         not null
 #
 class Appeal < ApplicationRecord
-  MAX_STRIKE_AGE = 20.days
+  TEXT_LENGTH_LIMIT = 2_000
 
   belongs_to :account
-  belongs_to :strike, class_name: 'AccountWarning', foreign_key: 'account_warning_id'
-  belongs_to :approved_by_account, class_name: 'Account', optional: true
-  belongs_to :rejected_by_account, class_name: 'Account', optional: true
+  belongs_to :strike, class_name: 'AccountWarning', foreign_key: 'account_warning_id', inverse_of: :appeal
 
-  validates :text, presence: true, length: { maximum: 2_000 }
+  with_options class_name: 'Account', optional: true do
+    belongs_to :approved_by_account
+    belongs_to :rejected_by_account
+  end
+
+  validates :text, presence: true, length: { maximum: TEXT_LENGTH_LIMIT }
   validates :account_warning_id, uniqueness: true
 
   validate :validate_time_frame, on: :create
@@ -52,9 +55,17 @@ class Appeal < ApplicationRecord
     update!(rejected_at: Time.now.utc, rejected_by_account: current_account)
   end
 
+  def to_log_human_identifier
+    account.acct
+  end
+
+  def to_log_route_param
+    account_warning_id
+  end
+
   private
 
   def validate_time_frame
-    errors.add(:base, I18n.t('strikes.errors.too_late')) if strike.created_at < MAX_STRIKE_AGE.ago
+    errors.add(:base, I18n.t('strikes.errors.too_late')) unless strike.appeal_eligible?
   end
 end

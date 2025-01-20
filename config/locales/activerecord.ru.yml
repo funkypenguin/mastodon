@@ -15,6 +15,11 @@ ru:
       user/invite_request:
         text: Причина
     errors:
+      attributes:
+        domain:
+          invalid: не является действующим доменным именем
+      messages:
+        invalid_domain_on_line: "%{value} Не является действительным доменным именем"
       models:
         account:
           attributes:
@@ -29,10 +34,19 @@ ru:
           attributes:
             website:
               invalid: не является допустимым URL
+        import:
+          attributes:
+            data:
+              malformed: неверный формат
+        list_account:
+          attributes:
+            account_id:
+              taken: уже в списке
+          must_be_following: должен быть пользователем, на которого вы подписаны
         status:
           attributes:
             reblog:
-              taken: поста уже существует
+              taken: пост уже существует
         user:
           attributes:
             email:
@@ -44,4 +58,12 @@ ru:
           attributes:
             permissions_as_keys:
               dangerous: включить разрешения, небезопасные для базовой роли
+              elevated: не может включать разрешения, которыми не обладает ваша текущая роль
               own_role: невозможно изменить с вашей текущей ролью
+            position:
+              elevated: не может быть выше, чем ваша текущая роль
+              own_role: невозможно изменить с вашей текущей ролью
+        webhook:
+          attributes:
+            events:
+              invalid_permissions: нельзя включать события, к которым у вас нет прав

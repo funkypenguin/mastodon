@@ -15,6 +15,11 @@ io:
       user/invite_request:
         text: Rezono
     errors:
+      attributes:
+        domain:
+          invalid: ne esas valida domennomo
+      messages:
+        invalid_domain_on_line: "%{value} ne esas valida domennomo"
       models:
         account:
           attributes:
@@ -29,6 +34,10 @@ io:
           attributes:
             website:
               invalid: ne esas valida URL
+        import:
+          attributes:
+            data:
+              malformed: esas misformaca
         status:
           attributes:
             reblog:
@@ -49,3 +58,7 @@ io:
             position:
               elevated: ne povas divenar plu alta kam vua nuna rolo
               own_role: ne povas divenesar kun vua nuna rolo
+        webhook:
+          attributes:
+            events:
+              invalid_permissions: ne povas inkluzar eventi a qui vu ne havas la yuri

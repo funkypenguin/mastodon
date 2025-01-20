@@ -4,6 +4,7 @@ class Admin::Trends::TagsController < Admin::BaseController
   def index
     authorize :tag, :review?
 
+    @pending_tags_count = Tag.pending_review.async_count
     @tags = filtered_tags.page(params[:page])
     @form = Trends::TagBatch.new
   end
@@ -14,7 +15,7 @@ class Admin::Trends::TagsController < Admin::BaseController
     @form = Trends::TagBatch.new(trends_tag_batch_params.merge(current_account: current_account, action: action_from_button))
     @form.save
   rescue ActionController::ParameterMissing
-    flash[:alert] = I18n.t('admin.accounts.no_account_selected')
+    flash[:alert] = I18n.t('admin.trends.tags.no_tag_selected')
   ensure
     redirect_to admin_trends_tags_path(filter_params)
   end

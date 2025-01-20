@@ -15,6 +15,11 @@ th:
       user/invite_request:
         text: เหตุผล
     errors:
+      attributes:
+        domain:
+          invalid: ไม่ใช่ชื่อโดเมนที่ถูกต้อง
+      messages:
+        invalid_domain_on_line: "%{value} ไม่ใช่ชื่อโดเมนที่ถูกต้อง"
       models:
         account:
           attributes:
@@ -29,6 +34,15 @@ th:
           attributes:
             website:
               invalid: ไม่ใช่ URL ที่ถูกต้อง
+        import:
+          attributes:
+            data:
+              malformed: ผิดรูปแบบ
+        list_account:
+          attributes:
+            account_id:
+              taken: อยู่ในรายการอยู่แล้ว
+          must_be_following: ต้องเป็นบัญชีที่ติดตาม
         status:
           attributes:
             reblog:
@@ -43,7 +57,13 @@ th:
         user_role:
           attributes:
             permissions_as_keys:
-              dangerous: รวมสิทธิ์ที่ไม่ปลอดภัยสำหรับบทบาทพื้นฐาน
-              elevated: ไม่สามารถรวบรวมสิทธิ์ในบทบาทปัจจุบันของคุณไม่ได้
+              dangerous: รวมสิทธิอนุญาตที่ไม่ปลอดภัยสำหรับบทบาทพื้นฐาน
+              elevated: ไม่สามารถรวมสิทธิอนุญาตที่บทบาทปัจจุบันของคุณไม่มี
+              own_role: ไม่สามารถเปลี่ยนด้วยบทบาทปัจจุบันของคุณ
             position:
               elevated: ไม่สามารถสูงกว่าบทบาทปัจจุบันของคุณ
+              own_role: ไม่สามารถเปลี่ยนด้วยบทบาทปัจจุบันของคุณ
+        webhook:
+          attributes:
+            events:
+              invalid_permissions: ไม่สามารถรวมเหตุการณ์ที่คุณไม่มีสิทธิ
